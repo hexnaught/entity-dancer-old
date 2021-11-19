@@ -63,14 +63,17 @@ func (cc *ConnectedClients) AddClient(addr net.Addr) {
 	_, exist := cc.Clients[addr.String()]
 
 	if !exist {
-		fmt.Println(addr.String())
-		cc.Mux.Lock()
-		cc.Clients[addr.String()] = Client{
-			NetAddr:    addr,
-			LastUpdate: time.Now(),
-		}
-		cc.Mux.Unlock()
+		log.Printf("[entity-dancer] Adding Client: %s", addr.String())
 	}
+
+	cc.Mux.Lock()
+	// TODO: Move to using NWID or other identifier as the key, generated on
+	// join before adding as client or passed on via auth service
+	cc.Clients[addr.String()] = Client{
+		NetAddr:    addr,
+		LastUpdate: time.Now(),
+	}
+	cc.Mux.Unlock()
 }
 
 // RemoveClient ...
@@ -185,7 +188,7 @@ func (s *server) connectionCleaner(ctx context.Context) {
 			cl := s.Clients.GetClients()
 			currTime := time.Now()
 
-			fmt.Printf("[entity-dancer][%s] Current Clients: %d\n", time.Now().UTC().Format("2006-01-02T15:04:05.999Z"), len(cl))
+			log.Printf("[entity-dancer] Current Clients: %d\n", len(cl))
 			for k, v := range cl {
 				if currTime.Sub(v.LastUpdate) > s.ConnectionTimeoutLimit {
 					s.Clients.RemoveClient(k)
@@ -210,8 +213,8 @@ func (s *server) packetReceiver(ctx context.Context, buffer []byte, packetSender
 				continue
 			}
 
-			fmt.Printf("[entity-dancer] packet-received: bytes=%d from=%s packet=%s\n",
-				n, addr.String(), string(buffer[:n]))
+			// fmt.Printf("[entity-dancer] packet-received: bytes=%d from=%s packet=%s\n",
+			// 	n, addr.String(), string(buffer[:n]))
 
 			go s.packetHandler(addr, buffer[:n], packetSenderChannel, handler)
 		}
@@ -232,6 +235,9 @@ func (s *server) packetHandler(sendingClient net.Addr, buffer []byte, packetSend
 		packetSenderChannel <- resp.Data
 		break
 	case Interest:
+		// TODO: Interest algorithm, should possibly be a passed in method to run against clients
+		// 		 or the implementer uses GetClients and passes the clients that are 'of interest'
+		// Interest response type will then only send to clients that are considered of interest
 		return
 	case Self:
 		s.UDPListener.WriteTo(resp.Data, sendingClient)
@@ -255,17 +261,17 @@ func (s *server) packetSender(ctx context.Context, packetSenderChannel chan []by
 				continue
 			}
 
-			fmt.Printf("Packet: %b\n", packet)
+			log.Printf("[entity-dancer][SEND] Packet: %v\n", packet)
 
 			cl := s.Clients.GetClients()
 			for _, v := range cl {
 				go func(v Client) {
-					_, err := s.UDPListener.WriteTo(packet, v.NetAddr)
+					_, err := s.UDPListener.WriteTo([]byte(packet), v.NetAddr)
 					if err != nil {
-						fmt.Printf("%+v\n", err)
+						fmt.Printf("ERROR: %+v\n", err)
 						return
 					}
-					fmt.Printf("[entity-dancer] packet-written: bytes=%d to=%s\n", len(packet), v.NetAddr.String())
+					// log.Printf("[entity-dancer] packet-written: bytes=%d to=%s\n", len(packet), v.NetAddr.String())
 				}(v)
 			}
 		}

@@ -2,57 +2,25 @@ package main
 
 import (
 	"fmt"
+	"log"
+	"math/rand"
 	"time"
 
+	"github.com/hexnaught/entity-dancer/protocol"
 	"github.com/hexnaught/entity-dancer/server"
+	"github.com/oklog/ulid"
 )
 
-// PacketType is the type of packet received
-type PacketType byte
-
-const (
-	Join PacketType = iota
-	Part
-	KeepAlive
-	Move
-)
-
-func (pt PacketType) String() string {
-	return [...]string{"join", "part", "keep-alive", "move"}[pt]
-}
-
-// TypeHandler ...
-func TypeHandler(pt PacketType) {
-	switch pt {
-	case Join:
-		fmt.Println("Join Packet")
-	case Part:
-		fmt.Println("Part Packet")
-	case KeepAlive:
-		fmt.Println("Keep Alive Packet")
-	case Move:
-		fmt.Println("Move Packet")
-	}
-}
-
-type Vector3 struct {
-	x, y, z int16
-}
-
-type Quaternion struct {
-	x, y, z, w int16
-}
-
-type EntityData struct {
-	NWID      []byte     // Unique identifier
-	Postition Vector3    // Pos
-	Rotation  Quaternion // Rot
-}
+var startTime time.Time
+var randSeed *rand.Rand
 
 func main() {
+	startTime = time.Now()
+	randSeed = rand.New(rand.NewSource(startTime.UnixNano()))
+
 	server.New("localhost", 8989).
-		WithCleanupEvery(2 * time.Second).
-		WithConnectionTimeoutLimit(10 * time.Second).
+		WithCleanupEvery(5 * time.Second).
+		WithConnectionTimeoutLimit(15 * time.Second).
 		Start(
 			PacketHandler,
 		)
@@ -61,30 +29,77 @@ func main() {
 // PacketHandler takes an argument of packet data from the UDP socket,
 // returns the data to be written back to all clients
 func PacketHandler(p []byte) *server.Response {
-	// fmt.Printf("%v\n", b)
-	fmt.Printf("%v\n", string(p))
-	// fmt.Printf("Packet Type: %v\n", PacketType(p[0]).String())
+	// log.Printf("%v\n", b)
+	log.Printf("[Main.PacketHandler] Packet Bytes: %v\n", p)
+	log.Printf("[Main.PacketHandler] P0: %v\n", p[0])
+	// log.Printf("Packet Type: %v\n", PacketType(p[0]).String())
 
-	switch PacketType(p[0]) {
-	case Join:
-		fmt.Println("Join Packet")
+	switch protocol.PacketType(p[0]) {
+	case protocol.Join:
+		log.Println("[RX] Join Packet")
+		nwid, err := HandleJoin(p[1:])
+
+		if err != nil {
+			return &server.Response{
+				ResponseType: server.Interest,
+				Data:         []byte(err.Error()),
+			}
+		}
+
+		return &server.Response{
+			ResponseType: server.Interest,
+			Data:         []byte(fmt.Sprintf("[SERVER] %s", nwid)),
+		}
+	case protocol.Part:
+		log.Println("[RX] Part Packet")
+
+		return &server.Response{
+			ResponseType: server.Interest,
+			Data:         []byte("[SERVER] Client Parting"),
+		}
+	case protocol.KeepAlive:
+		log.Println("[RX] Keep Alive Packet")
+		return &server.Response{
+			ResponseType: server.Self,
+			Data:         []byte("[SERVER] Pong"),
+		}
 		return nil
-	case Part:
-		fmt.Println("Part Packet")
-		return nil
-	case KeepAlive:
-		fmt.Println("Keep Alive Packet")
-		return nil
-	case Move:
-		fmt.Println("Move Packet")
+	case protocol.Move:
+		log.Println("[RX] Move Packet")
+		log.Println(p)
+
 		return &server.Response{
 			ResponseType: server.All,
-			Data:         []byte(p[1:]),
+			Data:         []byte("[SERVER] Moving"),
 		}
 	default:
 		return &server.Response{
 			ResponseType: server.Self,
-			Data:         []byte("Unknown Packet Received"),
+			Data:         []byte("[SERVER] Unknown Packet Received"),
 		}
 	}
+}
+
+func HandleJoin(packetData []byte) (string, error) {
+	log.Printf("Got Data: %s\n", string(packetData))
+	gulid, err := GenerateULID()
+
+	if err != nil {
+		log.Printf("Error Generating ULID: %+v", err)
+		return "", err
+	}
+
+	bulid, err := gulid.MarshalBinary()
+	if err != nil {
+		log.Printf("Error Generating ULID: %+v", err)
+		return "", err
+	}
+
+	log.Printf("Generated ULID: %s | String: %s | Bin: %b\n", gulid, gulid.String(), bulid)
+	return gulid.String(), nil
+}
+
+func GenerateULID() (ulid.ULID, error) {
+	entropy := ulid.Monotonic(randSeed, 0)
+	return ulid.New(ulid.Timestamp(startTime), entropy)
 }
